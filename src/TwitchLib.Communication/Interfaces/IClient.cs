@@ -1,4 +1,7 @@
 ﻿using System;
+using System.Threading;
+using System.Threading.Tasks;
+
 using TwitchLib.Communication.Events;
 
 namespace TwitchLib.Communication.Interfaces
@@ -19,7 +22,7 @@ namespace TwitchLib.Communication.Interfaces
         /// The current number of Whispers waiting to be sent.
         /// </summary>
         int WhisperQueueLength { get; }
-        
+
         /// <summary>
         /// The current state of the connection.
         /// </summary>
@@ -28,13 +31,13 @@ namespace TwitchLib.Communication.Interfaces
         /// <summary>
         /// Client Configuration Options
         /// </summary>
-        IClientOptions Options {get;}
+        IClientOptions Options { get; }
 
         /// <summary>
         /// Fires when the Client has connected
         /// </summary>
         event EventHandler<OnConnectedEventArgs> OnConnected;
-        
+
         /// <summary>
         /// Fires when Data (ByteArray) is received.
         /// </summary>
@@ -89,8 +92,10 @@ namespace TwitchLib.Communication.Interfaces
         /// Disconnect the Client from the Server
         /// <param name="callDisconnect">Set disconnect called in the client. Used in test cases. (default true)</param>
         /// </summary>
-        void Close(bool callDisconnect = true);
-        
+        /// <param name="cancellationToken"></param>
+        /// <param name="callDisconnect"></param>
+        Task CloseAsync(CancellationToken cancellationToken, bool callDisconnect = true);
+
         /// <summary>
         /// Dispose the Client. Forces the Send Queue to be destroyed, resulting in Message Loss.
         /// </summary>
@@ -99,15 +104,17 @@ namespace TwitchLib.Communication.Interfaces
         /// <summary>
         /// Connect the Client to the requested Url.
         /// </summary>
+        /// <param name="cancellationToken"></param>
         /// <returns>Returns True if Connected, False if Failed to Connect.</returns>
-        bool Open();
+        Task<bool> OpenAsync(CancellationToken cancellationToken);
 
         /// <summary>
         /// Queue a Message to Send to the server as a String.
         /// </summary>
         /// <param name="message">The Message To Queue</param>
+        /// <param name="cancellationToken"></param>
         /// <returns>Returns True if was successfully queued. False if it fails.</returns>
-        bool Send(string message);
+        Task<bool> SendAsync(string message, CancellationToken cancellationToken);
 
         /// <summary>
         /// Queue a Whisper to Send to the server as a String.
@@ -119,7 +126,8 @@ namespace TwitchLib.Communication.Interfaces
         /// <summary>
         /// Manually reconnects the client.
         /// </summary>
-        void Reconnect();
+        /// <param name="cancellationToken"></param>
+        Task ReconnectAsync(CancellationToken cancellationToken);
 
         void MessageThrottled(OnMessageThrottledEventArgs eventArgs);
         void SendFailed(OnSendFailedEventArgs eventArgs);

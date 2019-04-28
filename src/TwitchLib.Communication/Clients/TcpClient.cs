@@ -53,59 +53,60 @@ namespace TwitchLib.Communication.Clients
                 {
                     TokenSource = _tokenSource
                 };
-            InitializeClient();
+            InitializeClientAsync(CancellationToken.None).GetAwaiter().GetResult();
         }
 
-        private void InitializeClient()
+        private async Task InitializeClientAsync(CancellationToken cancellationToken)
         {
             Client = new System.Net.Sockets.TcpClient();
 
             if (_monitorTask == null)
             {
-                _monitorTask = StartMonitorTask();
+                _monitorTask = StartMonitorTask(cancellationToken);
                 return;
             }
 
-            if (_monitorTask.IsCompleted) _monitorTask = StartMonitorTask();
+            if (_monitorTask.IsCompleted) _monitorTask = StartMonitorTask(cancellationToken);
+            await _monitorTask;
         }
 
-        public bool Open()
+        public async Task<bool> OpenAsync(CancellationToken cancellationToken)
         {
             try
             {
                 if (IsConnected) return true;
 
-                Task.Run(() => { 
-                InitializeClient();
-                Client.Connect(_server, Port);
-                if (Options.UseSsl)
+                Task.Run(() =>
                 {
-                    var ssl = new SslStream(Client.GetStream(), false);
-                    ssl.AuthenticateAsClient(_server);
-                    _reader = new StreamReader(ssl);
-                    _writer = new StreamWriter(ssl);
-                }
-                else
-                {
-                    _reader = new StreamReader(Client.GetStream());
-                    _writer = new StreamWriter(Client.GetStream());
-                }
+                    InitializeClientAsync(cancellationToken);
+                    Client.Connect(_server, Port);
+                    if (Options.UseSsl)
+                    {
+                        var ssl = new SslStream(Client.GetStream(), false);
+                        ssl.AuthenticateAsClient(_server);
+                        _reader = new StreamReader(ssl);
+                        _writer = new StreamWriter(ssl);
+                    }
+                    else
+                    {
+                        _reader = new StreamReader(Client.GetStream());
+                        _writer = new StreamWriter(Client.GetStream());
+                    }
                 }).Wait(10000);
 
-                if (!IsConnected) return Open();
-                
-                StartNetworkServices();
-                return true;
+                if (!IsConnected) return await OpenAsync(cancellationToken).ConfigureAwait(false);
 
+                await StartNetworkServicesAsync(cancellationToken).ConfigureAwait(false);
+                return true;
             }
             catch (Exception)
             {
-                InitializeClient();
+                await InitializeClientAsync(cancellationToken).ConfigureAwait(false);
                 return false;
             }
         }
 
-        public void Close(bool callDisconnect = true)
+        public async Task CloseAsync(CancellationToken cancellationToken, bool callDisconnect = true)
         {
             _reader?.Dispose();
             _writer?.Dispose();
@@ -113,14 +114,14 @@ namespace TwitchLib.Communication.Clients
 
             _stopServices = callDisconnect;
             CleanupServices();
-            InitializeClient();
+            await InitializeClientAsync(cancellationToken).ConfigureAwait(false);
             OnDisconnected?.Invoke(this, new OnDisconnectedEventArgs());
         }
 
-        public void Reconnect()
+        public async Task ReconnectAsync(CancellationToken cancellationToken)
         {
-            Close();
-            Open();
+            await CloseAsync(cancellationToken).ConfigureAwait(false);
+            await OpenAsync(cancellationToken).ConfigureAwait(false);
             OnReconnected?.Invoke(this, new OnReconnectedEventArgs());
         }
 
@@ -139,7 +140,7 @@ namespace TwitchLib.Communication.Clients
             }
             catch (Exception ex)
             {
-                OnError?.Invoke(this, new OnErrorEventArgs {Exception = ex});
+                OnError?.Invoke(this, new OnErrorEventArgs { Exception = ex });
                 throw;
             }
         }
@@ -159,55 +160,56 @@ namespace TwitchLib.Communication.Clients
             }
             catch (Exception ex)
             {
-                OnError?.Invoke(this, new OnErrorEventArgs {Exception = ex});
+                OnError?.Invoke(this, new OnErrorEventArgs { Exception = ex });
                 throw;
             }
         }
 
-        private void StartNetworkServices()
+        private Task StartNetworkServicesAsync(CancellationToken cancellationToken)
         {
             _networkServicesRunning = true;
             _networkTasks = new[]
             {
-                StartListenerTask(),
-                _throttlers.StartSenderTask(),
-                _throttlers.StartWhisperSenderTask()
+                StartListenerTaskAsync(cancellationToken),
+                _throttlers.StartSenderTaskAsync(cancellationToken),
+                _throttlers.StartWhisperSenderTaskAsync(cancellationToken)
             }.ToArray();
 
-            if (!_networkTasks.Any(c => c.IsFaulted)) return;
+            if (!_networkTasks.Any(c => c.IsFaulted)) return Task.CompletedTask;
             _networkServicesRunning = false;
             CleanupServices();
+
+            return Task.CompletedTask;
         }
 
-        public Task SendAsync(string message)
+        public async Task<bool> SendAsync(string message, CancellationToken cancellationToken)
         {
-            return Task.Run(async () =>
-            {
-                await _writer.WriteLineAsync(message);
-                await _writer.FlushAsync();
-            });
+            cancellationToken.ThrowIfCancellationRequested();
+            await _writer.WriteLineAsync(message).ConfigureAwait(false);
+            await _writer.FlushAsync().ConfigureAwait(false);
+
+            return true;
         }
 
-        private Task StartListenerTask()
+        private async Task StartListenerTaskAsync(CancellationToken cancellationToken)
         {
-            return Task.Run(async () =>
+            while (IsConnected
+                && _networkServicesRunning
+                && !cancellationToken.IsCancellationRequested)
             {
-                while (IsConnected && _networkServicesRunning)
+                try
                 {
-                    try
-                    {
-                        var input = await _reader.ReadLineAsync();
-                        OnMessage?.Invoke(this, new OnMessageEventArgs {Message = input});
-                    }
-                    catch (Exception ex)
-                    {
-                        OnError?.Invoke(this, new OnErrorEventArgs {Exception = ex});
-                    }
+                    var input = await _reader.ReadLineAsync().ConfigureAwait(false);
+                    OnMessage?.Invoke(this, new OnMessageEventArgs { Message = input });
                 }
-            });
+                catch (Exception ex)
+                {
+                    OnError?.Invoke(this, new OnErrorEventArgs { Exception = ex });
+                }
+            }
         }
 
-        private Task StartMonitorTask()
+        private Task StartMonitorTask(CancellationToken cancellationToken)
         {
             return Task.Run(() =>
             {
@@ -242,11 +244,11 @@ namespace TwitchLib.Communication.Clients
                 }
                 catch (Exception ex)
                 {
-                    OnError?.Invoke(this, new OnErrorEventArgs {Exception = ex});
+                    OnError?.Invoke(this, new OnErrorEventArgs { Exception = ex });
                 }
 
                 if (needsReconnect && !_stopServices)
-                    Reconnect();
+                    ReconnectAsync(cancellationToken);
             }, _tokenSource.Token);
         }
 
@@ -292,7 +294,7 @@ namespace TwitchLib.Communication.Clients
 
         public void Dispose()
         {
-            Close();
+            CloseAsync(CancellationToken.None).GetAwaiter().GetResult();
             _throttlers.ShouldDispose = true;
             _tokenSource.Cancel();
             Thread.Sleep(500);

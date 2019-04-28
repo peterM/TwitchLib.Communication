@@ -46,11 +46,10 @@ namespace TwitchLib.Communication.Services
                 while (!ShouldDispose && !Reconnecting)
                 {
                     Interlocked.Exchange(ref SentCount, 0);
-                    await Task.Delay(_throttlingPeriod, TokenSource.Token);
+                    await Task.Delay(_throttlingPeriod, TokenSource.Token).ConfigureAwait(false);
                 }
 
                 ResetThrottlerRunning = false;
-                return Task.CompletedTask;
             });
         }
 
@@ -80,10 +79,10 @@ namespace TwitchLib.Communication.Services
             Interlocked.Increment(ref WhispersSent);
         }
 
-        public Task StartSenderTask()
+        public Task StartSenderTaskAsync(CancellationToken cancellationToken)
         {
             StartThrottlingWindowReset();
-            
+
             return Task.Run(async () =>
             {
                 try
@@ -116,10 +115,10 @@ namespace TwitchLib.Communication.Services
                             switch (_client)
                             {
                                 case WebSocketClient ws:
-                                    await ws.SendAsync(Encoding.UTF8.GetBytes(msg.Item2));
+                                    await ws.SendAsync(Encoding.UTF8.GetBytes(msg.Item2), cancellationToken).ConfigureAwait(false);
                                     break;
                                 case TcpClient tcp:
-                                    await tcp.SendAsync(msg.Item2);
+                                    await tcp.SendAsync(msg.Item2, cancellationToken).ConfigureAwait(false);
                                     break;
                             }
 
@@ -127,30 +126,30 @@ namespace TwitchLib.Communication.Services
                         }
                         catch (Exception ex)
                         {
-                            _client.SendFailed(new OnSendFailedEventArgs {Data = msg.Item2, Exception = ex});
+                            _client.SendFailed(new OnSendFailedEventArgs { Data = msg.Item2, Exception = ex });
                             break;
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    _client.SendFailed(new OnSendFailedEventArgs {Data = "", Exception = ex});
-                    _client.Error(new OnErrorEventArgs {Exception = ex});
+                    _client.SendFailed(new OnSendFailedEventArgs { Data = "", Exception = ex });
+                    _client.Error(new OnErrorEventArgs { Exception = ex });
                 }
             });
         }
 
-        public Task StartWhisperSenderTask()
+        public Task StartWhisperSenderTaskAsync(CancellationToken cancellationToken)
         {
             StartWhisperThrottlingWindowReset();
-            
+
             return Task.Run(async () =>
             {
                 try
                 {
                     while (!ShouldDispose)
                     {
-                        await Task.Delay(_client.Options.SendDelay);
+                        await Task.Delay(_client.Options.SendDelay).ConfigureAwait(false);
 
                         if (WhispersSent == _client.Options.WhispersAllowedInPeriod)
                         {
@@ -176,10 +175,10 @@ namespace TwitchLib.Communication.Services
                             switch (_client)
                             {
                                 case WebSocketClient ws:
-                                    await ws.SendAsync(Encoding.UTF8.GetBytes(msg.Item2));
+                                    await ws.SendAsync(Encoding.UTF8.GetBytes(msg.Item2), cancellationToken).ConfigureAwait(false);
                                     break;
                                 case TcpClient tcp:
-                                    await tcp.SendAsync(msg.Item2);
+                                    await tcp.SendAsync(msg.Item2, cancellationToken).ConfigureAwait(false);
                                     break;
                             }
 
@@ -187,15 +186,15 @@ namespace TwitchLib.Communication.Services
                         }
                         catch (Exception ex)
                         {
-                            _client.SendFailed(new OnSendFailedEventArgs {Data = msg.Item2, Exception = ex});
+                            _client.SendFailed(new OnSendFailedEventArgs { Data = msg.Item2, Exception = ex });
                             break;
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    _client.SendFailed(new OnSendFailedEventArgs {Data = "", Exception = ex});
-                    _client.Error(new OnErrorEventArgs {Exception = ex});
+                    _client.SendFailed(new OnSendFailedEventArgs { Data = "", Exception = ex });
+                    _client.Error(new OnErrorEventArgs { Exception = ex });
                 }
             });
         }

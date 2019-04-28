@@ -1,8 +1,10 @@
 ﻿using System.Threading;
 using System.Threading.Tasks;
+
 using TwitchLib.Communication.Clients;
 using TwitchLib.Communication.Events;
 using TwitchLib.Communication.Models;
+
 using Xunit;
 
 namespace TwitchLib.Communication.Tests
@@ -18,10 +20,10 @@ namespace TwitchLib.Communication.Tests
             Assert.Raises<OnConnectedEventArgs>(
                 h => client.OnConnected += h,
                 h => client.OnConnected -= h,
-                () =>
+               async () =>
                 {
                     client.OnConnected += (sender, e) => { pauseConnected.Set(); };
-                    client.Open();
+                    await client.OpenAsync(CancellationToken.None);
                     Assert.True(pauseConnected.WaitOne(5000));
                 });
         }
@@ -29,24 +31,24 @@ namespace TwitchLib.Communication.Tests
         [Fact]
         public void Client_Raises_OnDisconnected_EventArgs()
         {
-            var client = new WebSocketClient(new ClientOptions() {DisconnectWait = 5000});
+            var client = new WebSocketClient(new ClientOptions() { DisconnectWait = 5000 });
             var pauseDisconnected = new ManualResetEvent(false);
 
             Assert.Raises<OnDisconnectedEventArgs>(
                 h => client.OnDisconnected += h,
                 h => client.OnDisconnected -= h,
-                () =>
+                async () =>
                 {
                     client.OnConnected += async (sender, e) =>
                     {
                         await Task.Delay(3000);
-                        client.Close();
+                        await client.CloseAsync(CancellationToken.None);
                     };
                     client.OnDisconnected += (sender, e) =>
                     {
                         pauseDisconnected.Set();
                     };
-                    client.Open();
+                    await client.OpenAsync(CancellationToken.None);
                     Assert.True(pauseDisconnected.WaitOne(200000));
                 });
         }
@@ -54,21 +56,21 @@ namespace TwitchLib.Communication.Tests
         [Fact]
         public void Client_Raises_OnReconnected_EventArgs()
         {
-            var client = new WebSocketClient(new ClientOptions(){ReconnectionPolicy = null});
+            var client = new WebSocketClient(new ClientOptions() { ReconnectionPolicy = null });
             var pauseReconnected = new ManualResetEvent(false);
 
             Assert.Raises<OnReconnectedEventArgs>(
                 h => client.OnReconnected += h,
                 h => client.OnReconnected -= h,
-                () =>
+               async () =>
                 {
                     client.OnConnected += async (s, e) =>
                     {
-                        client.Reconnect();
+                        await client.ReconnectAsync(CancellationToken.None);
                     };
 
                     client.OnReconnected += (s, e) => { pauseReconnected.Set(); };
-                    client.Open();
+                    await client.OpenAsync(CancellationToken.None);
 
                     Assert.True(pauseReconnected.WaitOne(20000));
                 });
@@ -81,7 +83,7 @@ namespace TwitchLib.Communication.Tests
             client.Dispose();
         }
 
-       
+
         [Fact]
         public void Client_Can_SendAndReceive_Messages()
         {
@@ -92,7 +94,7 @@ namespace TwitchLib.Communication.Tests
             Assert.Raises<OnMessageEventArgs>(
                 h => client.OnMessage += h,
                 h => client.OnMessage -= h,
-                () =>
+              async () =>
                 {
                     client.OnConnected += (sender, e) => { pauseConnected.Set(); };
 
@@ -102,8 +104,8 @@ namespace TwitchLib.Communication.Tests
                         Assert.Equal("PONG :tmi.twitch.tv", e.Message);
                     };
 
-                    client.Open();
-                    client.Send("PING");
+                    await client.OpenAsync(CancellationToken.None);
+                    await client.SendAsync("PING", CancellationToken.None);
                     Assert.True(pauseConnected.WaitOne(5000));
                     Assert.True(pauseReadMessage.WaitOne(5000));
                 });
