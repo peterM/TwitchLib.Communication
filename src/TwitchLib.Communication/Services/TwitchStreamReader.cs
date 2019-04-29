@@ -2,13 +2,14 @@
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+
 using TwitchLib.Communication.Events;
 
 namespace TwitchLib.Communication.Services
 {
     internal class TwitchStreamReader : AbstractTwitchStreamOperator, ITwitchStreamReader
     {
-        private StreamReader _reader;
+        protected StreamReader Reader;
 
         public event Func<object, OnErrorEventArgs, Task> OnError;
         public event Func<object, OnMessageEventArgs, Task> OnMessage;
@@ -19,26 +20,29 @@ namespace TwitchLib.Communication.Services
 
         protected override Task DisposeAsync(bool disposing)
         {
-            _reader.Dispose();
+            Reader?.Dispose();
 
             return Task.CompletedTask;
         }
 
         protected override Task FromStreamAsync(Stream stream)
         {
-            _reader = new StreamReader(stream);
+            Reader = new StreamReader(stream);
 
             return Task.CompletedTask;
         }
 
         public async Task StartListen(CancellationToken cancellationToken)
         {
+            if (Reader == null)
+                return;
+
             while (TcpClient.Connected
                    && !cancellationToken.IsCancellationRequested)
             {
                 try
                 {
-                    string message = await _reader.ReadLineAsync().ConfigureAwait(false);
+                    string message = await Reader.ReadLineAsync().ConfigureAwait(false);
                     OnMessage?.Invoke(this, new OnMessageEventArgs { Message = message });
                 }
                 catch (Exception ex)

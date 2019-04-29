@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Threading;
 using System.Threading.Tasks;
+
 using TwitchLib.Communication.Interfaces;
 using TwitchLib.Communication.Models;
 using TwitchLib.Communication.Services;

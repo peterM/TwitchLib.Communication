@@ -6,7 +6,7 @@ using TwitchLib.Communication.Events;
 
 namespace TwitchLib.Communication.Services
 {
-    internal class TwitchStreamWriter : AbstractTwitchStreamOperator, ITwitchStreamWriter
+    internal class TwitchStreamWriter : AbstractTwitchStreamOperator, ITwitchStreamWritter
     {
         protected StreamWriter Writter;
 
@@ -40,7 +40,7 @@ namespace TwitchLib.Communication.Services
 
         protected override Task DisposeAsync(bool disposing)
         {
-            Writter.Dispose();
+            Writter?.Dispose();
 
             return Task.CompletedTask;
         }

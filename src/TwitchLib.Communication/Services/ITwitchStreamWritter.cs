@@ -5,7 +5,7 @@ using TwitchLib.Communication.Events;
 
 namespace TwitchLib.Communication.Services
 {
-    internal interface ITwitchStreamWriter : ITwitchStreamOperator
+    internal interface ITwitchStreamWritter : ITwitchStreamOperator
     {
         event Func<object, OnErrorEventArgs, Task> OnError;
 

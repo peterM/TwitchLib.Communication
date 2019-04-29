@@ -15,8 +15,8 @@ namespace TwitchLib.Communication.Clients
         private const string _server = "irc.chat.twitch.tv";
 
         private System.Net.Sockets.TcpClient _tcpClient;
-        private ITwitchStreamReader _reader;
-        private ITwitchStreamWriter _writer;
+        private readonly ITwitchStreamReader _twitchStreamReader;
+        private readonly ITwitchStreamWritter _twitchStreamWritter;
 
         protected CancellationTokenSource TokenSource { get; set; }
 
@@ -33,22 +33,22 @@ namespace TwitchLib.Communication.Clients
         {
             add
             {
-                if (_reader != null)
-                    _reader.OnError += value;
+                if (_twitchStreamReader != null)
+                    _twitchStreamReader.OnError += value;
 
-                if (_writer != null)
-                    _writer.OnError += value;
+                if (_twitchStreamWritter != null)
+                    _twitchStreamWritter.OnError += value;
 
                 OnErrorInternal += value;
             }
 
             remove
             {
-                if (_reader != null)
-                    _reader.OnError -= value;
+                if (_twitchStreamReader != null)
+                    _twitchStreamReader.OnError -= value;
 
-                if (_writer != null)
-                    _writer.OnError -= value;
+                if (_twitchStreamWritter != null)
+                    _twitchStreamWritter.OnError -= value;
 
                 OnErrorInternal -= value;
             }
@@ -58,14 +58,14 @@ namespace TwitchLib.Communication.Clients
         {
             add
             {
-                if (_reader != null)
-                    _reader.OnMessage += value;
+                if (_twitchStreamReader != null)
+                    _twitchStreamReader.OnMessage += value;
             }
 
             remove
             {
-                if (_reader != null)
-                    _reader.OnMessage -= value;
+                if (_twitchStreamReader != null)
+                    _twitchStreamReader.OnMessage -= value;
             }
         }
 
@@ -76,17 +76,34 @@ namespace TwitchLib.Communication.Clients
         public event Func<object, OnStateChangedEventArgs, Task> OnStateChanged;
         public event Func<object, OnReconnectedEventArgs, Task> OnReconnected;
 
-        public AsyncTcpClient(IClientOptions clientOptions)
+        internal AsyncTcpClient(
+            IClientOptions clientOptions,
+            ITwitchStreamReader twitchStreamReader,
+            ITwitchStreamWritter twitchStreamWritter)
         {
             NetworkServices = new List<Task>();
             TokenSource = new CancellationTokenSource();
 
-            _reader = new TwitchStreamReader(_server);
-            _writer = new TwitchStreamWriter(_server);
+            _twitchStreamReader = twitchStreamReader;
+            _twitchStreamWritter = twitchStreamWritter;
 
             Options = clientOptions;
 
             CreateClient();
+        }
+
+        public AsyncTcpClient()
+            : this(new ClientOptions(),
+                  new TwitchStreamReader(_server),
+                  new TwitchStreamWriter(_server))
+        {
+        }
+
+        public AsyncTcpClient(IClientOptions clientOptions)
+           : this(clientOptions,
+                 new TwitchStreamReader(_server),
+                 new TwitchStreamWriter(_server))
+        {
         }
 
         private void CreateClient()
@@ -95,11 +112,6 @@ namespace TwitchLib.Communication.Clients
                 return;
 
             _tcpClient = new System.Net.Sockets.TcpClient();
-        }
-
-        public AsyncTcpClient()
-            : this(new ClientOptions())
-        {
         }
 
         public virtual async Task<bool> OpenAsync()
@@ -163,7 +175,7 @@ namespace TwitchLib.Communication.Clients
 
         public virtual async Task<bool> SendAsync(string message)
         {
-            return await _writer.WriteAsync(message)
+            return await _twitchStreamWritter.WriteAsync(message)
                 .ConfigureAwait(false);
         }
 
@@ -182,24 +194,22 @@ namespace TwitchLib.Communication.Clients
                 TokenSource = null;
 
                 _tcpClient?.Close();
-                _reader?.Dispose();
-                _writer?.Dispose();
+                _twitchStreamReader?.Dispose();
+                _twitchStreamWritter?.Dispose();
                 await CleanupServicesAsync()
                     .ConfigureAwait(false);
 
                 _tcpClient = null;
-                _reader = null;
-                _writer = null;
                 NetworkServices.Clear();
             }
         }
 
         private async Task SetupReadersWritersAsync()
         {
-            await _reader.SetupFromClientAsync(_tcpClient, Options)
+            await _twitchStreamReader.SetupFromClientAsync(_tcpClient, Options)
                 .ConfigureAwait(false);
 
-            await _writer.SetupFromClientAsync(_tcpClient, Options)
+            await _twitchStreamWritter.SetupFromClientAsync(_tcpClient, Options)
                 .ConfigureAwait(false);
         }
 
@@ -286,7 +296,7 @@ namespace TwitchLib.Communication.Clients
 
         protected virtual Task StartNetworkServicesAsync(CancellationToken cancellationToken)
         {
-            NetworkServices.Add(_reader.StartListen(cancellationToken));
+            NetworkServices.Add(_twitchStreamReader.StartListen(cancellationToken));
 
             return Task.CompletedTask;
         }
