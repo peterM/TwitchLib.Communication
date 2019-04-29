@@ -11,38 +11,36 @@ using TwitchLib.Communication.Models;
 
 namespace TwitchLib.Communication.Clients
 {
-    public sealed class AsyncTcpClient : IDisposable
+    public class AsyncTcpClient : IDisposable
     {
         private const string _server = "irc.chat.twitch.tv";
 
-        private CancellationTokenSource _cancellationTokenSource;
-        private readonly List<Task> _networkServices;
         private System.Net.Sockets.TcpClient _tcpClient;
         private StreamReader _reader;
         private StreamWriter _writer;
 
-        private int Port => GetPort();
+        protected CancellationTokenSource TokenSource { get; set; }
+
+        protected List<Task> NetworkServices { get; }
+
+        protected int Port => GetPort();
 
         public IClientOptions Options { get; }
 
         public bool IsConnected => _tcpClient?.Connected ?? false;
 
         public event Func<object, OnConnectedEventArgs, Task> OnConnected;
-        public event Func<object, OnDataEventArgs, Task> OnData;
         public event Func<object, OnDisconnectedEventArgs, Task> OnDisconnected;
         public event Func<object, OnErrorEventArgs, Task> OnError;
         public event Func<object, OnFatalErrorEventArgs, Task> OnFatality;
         public event Func<object, OnMessageEventArgs, Task> OnMessage;
-        public event Func<object, OnMessageThrottledEventArgs, Task> OnMessageThrottled;
-        public event Func<object, OnWhisperThrottledEventArgs, Task> OnWhisperThrottled;
-        public event Func<object, OnSendFailedEventArgs, Task> OnSendFailed;
         public event Func<object, OnStateChangedEventArgs, Task> OnStateChanged;
         public event Func<object, OnReconnectedEventArgs, Task> OnReconnected;
 
         public AsyncTcpClient(IClientOptions clientOptions)
         {
-            _networkServices = new List<Task>();
-            _cancellationTokenSource = new CancellationTokenSource();
+            NetworkServices = new List<Task>();
+            TokenSource = new CancellationTokenSource();
 
             Options = clientOptions;
 
@@ -62,7 +60,7 @@ namespace TwitchLib.Communication.Clients
         {
         }
 
-        public async Task<bool> OpenAsync()
+        public virtual async Task<bool> OpenAsync()
         {
             try
             {
@@ -71,7 +69,7 @@ namespace TwitchLib.Communication.Clients
                     return true;
                 }
 
-                _networkServices.Add(StartMonitorTaskAsync(_cancellationTokenSource.Token));
+                NetworkServices.Add(StartMonitorTaskAsync(TokenSource.Token));
                 await ConnectAsync().ConfigureAwait(false);
 
                 if (Options.UseSsl)
@@ -91,8 +89,9 @@ namespace TwitchLib.Communication.Clients
                         .ConfigureAwait(false);
                 }
 
-                await StartNetworkServicesAsync(_cancellationTokenSource.Token)
+                await StartNetworkServicesAsync(TokenSource.Token)
                     .ConfigureAwait(false);
+
                 return true;
             }
             catch (Exception)
@@ -101,7 +100,7 @@ namespace TwitchLib.Communication.Clients
             }
         }
 
-        public async Task CloseAsync()
+        public virtual async Task CloseAsync()
         {
             await DisposeAsync(true)
                 .ConfigureAwait(false);
@@ -111,19 +110,35 @@ namespace TwitchLib.Communication.Clients
             await Task.CompletedTask;
         }
 
-        public async Task ReconnectAsync()
+        public virtual async Task ReconnectAsync()
         {
             await CloseAsync().ConfigureAwait(false);
-            _cancellationTokenSource = new CancellationTokenSource();
+            TokenSource = new CancellationTokenSource();
             CreateClient();
             await OpenAsync().ConfigureAwait(false);
             OnReconnected?.Invoke(this, new OnReconnectedEventArgs());
         }
 
-        public async Task SendAsync(string message)
+        public virtual async Task<bool> SendAsync(string message)
         {
-            await _writer.WriteLineAsync(message).ConfigureAwait(false);
-            await _writer.FlushAsync().ConfigureAwait(false);
+            var result = true;
+            try
+            {
+                await _writer.WriteLineAsync(message).ConfigureAwait(false);
+                await _writer.FlushAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                result = false;
+                RaiseOnErrorAsync(ex);
+            }
+
+            return result;
+        }
+
+        protected Task RaiseOnErrorAsync(Exception ex)
+        {
+            return AwaitTaskAsync(OnError?.Invoke(this, new OnErrorEventArgs { Exception = ex }));
         }
 
         public void Dispose()
@@ -131,13 +146,13 @@ namespace TwitchLib.Communication.Clients
             DisposeAsync(true).GetAwaiter().GetResult();
         }
 
-        private async Task DisposeAsync(bool disposing)
+        protected virtual async Task DisposeAsync(bool disposing)
         {
             if (disposing)
             {
-                _cancellationTokenSource?.Cancel();
-                _cancellationTokenSource?.Dispose();
-                _cancellationTokenSource = null;
+                TokenSource?.Cancel();
+                TokenSource?.Dispose();
+                TokenSource = null;
 
                 _tcpClient?.Close();
                 _reader?.Dispose();
@@ -147,7 +162,7 @@ namespace TwitchLib.Communication.Clients
                 _tcpClient = null;
                 _reader = null;
                 _writer = null;
-                _networkServices.Clear();
+                NetworkServices.Clear();
             }
         }
 
@@ -236,14 +251,14 @@ namespace TwitchLib.Communication.Clients
 
         private async Task CleanupServicesAsync()
         {
-            if (_networkServices.Count == 0)
+            if (NetworkServices.Count == 0)
             {
                 return;
             }
 
             try
             {
-                await Task.WhenAll(_networkServices).ConfigureAwait(false);
+                await Task.WhenAll(NetworkServices).ConfigureAwait(false);
             }
             catch (Exception)
             {
@@ -256,10 +271,9 @@ namespace TwitchLib.Communication.Clients
             }
         }
 
-        private Task StartNetworkServicesAsync(CancellationToken cancellationToken)
+        protected virtual Task StartNetworkServicesAsync(CancellationToken cancellationToken)
         {
-            Task listenerTask = StartListenerTaskAsync(cancellationToken);
-            _networkServices.Add(listenerTask);
+            NetworkServices.Add(StartListenerTaskAsync(cancellationToken));
 
             return Task.CompletedTask;
         }
