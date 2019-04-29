@@ -15,14 +15,13 @@ namespace TwitchLib.Communication.Clients
     {
         private const string _server = "irc.chat.twitch.tv";
 
-        private readonly List<Task> _networkServices;
-        private TaskCompletionSource<object> _taskCompletionSource;
         private CancellationTokenSource _cancellationTokenSource;
+        private readonly List<Task> _networkServices;
         private System.Net.Sockets.TcpClient _tcpClient;
         private StreamReader _reader;
         private StreamWriter _writer;
 
-        private int Port => Options != null ? Options.UseSsl ? 443 : 80 : 0; //TODO: hard to read
+        private int Port => GetPort();
 
         public IClientOptions Options { get; }
 
@@ -43,7 +42,6 @@ namespace TwitchLib.Communication.Clients
         public AsyncTcpClient(IClientOptions clientOptions)
         {
             _networkServices = new List<Task>();
-            _taskCompletionSource = new TaskCompletionSource<object>();
             _cancellationTokenSource = new CancellationTokenSource();
 
             Options = clientOptions;
@@ -120,6 +118,37 @@ namespace TwitchLib.Communication.Clients
             CreateClient();
             await OpenAsync().ConfigureAwait(false);
             OnReconnected?.Invoke(this, new OnReconnectedEventArgs());
+        }
+
+        public async Task SendAsync(string message)
+        {
+            await _writer.WriteLineAsync(message).ConfigureAwait(false);
+            await _writer.FlushAsync().ConfigureAwait(false);
+        }
+
+        public void Dispose()
+        {
+            DisposeAsync(true).GetAwaiter().GetResult();
+        }
+
+        private async Task DisposeAsync(bool disposing)
+        {
+            if (disposing)
+            {
+                _cancellationTokenSource?.Cancel();
+                _cancellationTokenSource?.Dispose();
+                _cancellationTokenSource = null;
+
+                _tcpClient?.Close();
+                _reader?.Dispose();
+                _writer?.Dispose();
+                await CleanupServicesAsync();
+
+                _tcpClient = null;
+                _reader = null;
+                _writer = null;
+                _networkServices.Clear();
+            }
         }
 
         private Task SetupAsNonSslAsync()
@@ -227,31 +256,6 @@ namespace TwitchLib.Communication.Clients
             }
         }
 
-        public async Task DisposeAsync(bool disposing)
-        {
-            if (disposing)
-            {
-                _cancellationTokenSource?.Cancel();
-                _cancellationTokenSource?.Dispose();
-                _cancellationTokenSource = null;
-
-                _tcpClient?.Close();
-                _reader?.Dispose();
-                _writer?.Dispose();
-                await CleanupServicesAsync();
-
-                _tcpClient = null;
-                _reader = null;
-                _writer = null;
-                _networkServices.Clear();
-            }
-        }
-
-        public void Dispose()
-        {
-            DisposeAsync(true).GetAwaiter().GetResult();
-        }
-
         private Task StartNetworkServicesAsync(CancellationToken cancellationToken)
         {
             Task listenerTask = StartListenerTaskAsync(cancellationToken);
@@ -275,6 +279,14 @@ namespace TwitchLib.Communication.Clients
                     OnError?.Invoke(this, new OnErrorEventArgs { Exception = ex });
                 }
             }
+        }
+
+        private int GetPort()
+        {
+            if (Options == null)
+                return 0;
+
+            return Options.UseSsl ? 443 : 80;
         }
     }
 }
