@@ -259,6 +259,11 @@ namespace TwitchLib.Communication.Clients
 
                     lastState = IsConnected;
                 }
+
+                if (cancellationToken.IsCancellationRequested && lastState)
+                {
+                    OnStateChanged?.Invoke(this, new OnStateChangedEventArgs { IsConnected = IsConnected, WasConnected = lastState });
+                }
             }
             catch (Exception ex)
             {
