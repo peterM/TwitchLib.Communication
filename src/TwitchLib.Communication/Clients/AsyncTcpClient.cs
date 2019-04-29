@@ -81,11 +81,8 @@ namespace TwitchLib.Communication.Clients
                 NetworkServices.Add(StartMonitorTaskAsync(TokenSource.Token));
                 await ConnectAsync().ConfigureAwait(false);
 
-                await SetupAsNonSslAsync()
+                await SetupReadersWritersAsync()
                      .ConfigureAwait(false);
-
-                await SetupStreamsAsSslAsync()
-                        .ConfigureAwait(false);
 
                 if (!IsConnected)
                 {
@@ -170,7 +167,7 @@ namespace TwitchLib.Communication.Clients
             }
         }
 
-        private async Task SetupAsNonSslAsync()
+        private async Task SetupReadersWritersAsync()
         {
             var stream = await StreamReceivers.SingleOrDefault(d => d.IsHttps == Options.UseSsl)
                 .GetStreamAsync(_tcpClient).ConfigureAwait(false);
