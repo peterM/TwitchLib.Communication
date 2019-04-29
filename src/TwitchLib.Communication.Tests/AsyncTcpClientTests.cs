@@ -15,7 +15,9 @@ namespace TwitchLib.Communication.Tests
 
             await client.OpenAsync();
             Assert.True(client.IsConnected);
-            await Task.Delay(5000);
+
+            //await Task.Delay(5000);
+
             await client.CloseAsync();
             Assert.False(client.IsConnected);
         }
