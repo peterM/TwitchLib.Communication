@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Security;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,11 +9,19 @@ using System.Threading.Tasks;
 using TwitchLib.Communication.Events;
 using TwitchLib.Communication.Interfaces;
 using TwitchLib.Communication.Models;
+using TwitchLib.Communication.Services;
 
 namespace TwitchLib.Communication.Clients
 {
     public class AsyncTcpClient : IDisposable
     {
+        private IEnumerable<IStreamReceiver> StreamReceivers =>
+            new IStreamReceiver[]
+            {
+                new HttpStreamReceiver(),
+                new HttpsStreamReceiver(_server)
+            };
+
         private const string _server = "irc.chat.twitch.tv";
 
         private System.Net.Sockets.TcpClient _tcpClient;
@@ -72,16 +81,11 @@ namespace TwitchLib.Communication.Clients
                 NetworkServices.Add(StartMonitorTaskAsync(TokenSource.Token));
                 await ConnectAsync().ConfigureAwait(false);
 
-                if (Options.UseSsl)
-                {
-                    await SetupStreamsAsSslAsync()
+                await SetupAsNonSslAsync()
+                     .ConfigureAwait(false);
+
+                await SetupStreamsAsSslAsync()
                         .ConfigureAwait(false);
-                }
-                else
-                {
-                    await SetupAsNonSslAsync()
-                        .ConfigureAwait(false);
-                }
 
                 if (!IsConnected)
                 {
@@ -166,25 +170,13 @@ namespace TwitchLib.Communication.Clients
             }
         }
 
-        private Task SetupAsNonSslAsync()
+        private async Task SetupAsNonSslAsync()
         {
-            _reader = new StreamReader(_tcpClient.GetStream());
-            _writer = new StreamWriter(_tcpClient.GetStream());
+            var stream = await StreamReceivers.SingleOrDefault(d => d.IsHttps == Options.UseSsl)
+                .GetStreamAsync(_tcpClient).ConfigureAwait(false);
 
-            return Task.CompletedTask;
-        }
-
-        private void SetupStreams(Stream stream)
-        {
             _reader = new StreamReader(stream);
             _writer = new StreamWriter(stream);
-        }
-
-        private async Task SetupStreamsAsSslAsync()
-        {
-            SslStream sslStream = new SslStream(_tcpClient.GetStream(), false);
-            await sslStream.AuthenticateAsClientAsync(_server).ConfigureAwait(false);
-            SetupStreams(sslStream);
         }
 
         private async Task ConnectAsync()
