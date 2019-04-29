@@ -68,12 +68,15 @@ namespace TwitchLib.Communication.Clients
 
             if (_monitorTask == null)
             {
-                await StartMonitorTaskAsync(cancellationToken).ConfigureAwait(false);
+                _monitorTask = StartMonitorTaskAsync(cancellationToken);
                 return;
             }
 
-            if (_monitorTask.IsCompleted) _monitorTask = StartMonitorTaskAsync(cancellationToken);
-            await _monitorTask;
+            if (_monitorTask.IsCompleted)
+            {
+                _monitorTask = StartMonitorTaskAsync(cancellationToken);
+                await _monitorTask;
+            }
         }
 
         public async Task<bool> OpenAsync(CancellationToken cancellationToken)
@@ -102,13 +105,14 @@ namespace TwitchLib.Communication.Clients
             Client?.Abort();
             _stopServices = callDisconnect;
             CleanupServices();
-            await InitializeClientAsync(cancellationToken).ConfigureAwait(false);
+            //await InitializeClientAsync(cancellationToken).ConfigureAwait(false);
             OnDisconnected?.Invoke(this, new OnDisconnectedEventArgs());
         }
 
         public async Task ReconnectAsync(CancellationToken cancellationToken)
         {
             await CloseAsync(cancellationToken).ConfigureAwait(false);
+            await InitializeClientAsync(cancellationToken).ConfigureAwait(false);
             await OpenAsync(cancellationToken).ConfigureAwait(false);
             OnReconnected?.Invoke(this, new OnReconnectedEventArgs());
         }
@@ -231,7 +235,7 @@ namespace TwitchLib.Communication.Clients
                 {
                     if (lastState == IsConnected)
                     {
-                        Thread.Sleep(200);
+                        await Task.Delay(200).ConfigureAwait(false);
                         continue;
                     }
                     OnStateChanged?.Invoke(this, new OnStateChangedEventArgs { IsConnected = Client.State == WebSocketState.Open, WasConnected = lastState });

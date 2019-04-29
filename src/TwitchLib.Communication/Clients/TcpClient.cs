@@ -2,10 +2,9 @@
 using System.IO;
 using System.Linq;
 using System.Net.Security;
-using System.Net.Sockets;
-using System.Net.WebSockets;
 using System.Threading;
 using System.Threading.Tasks;
+
 using TwitchLib.Communication.Events;
 using TwitchLib.Communication.Interfaces;
 using TwitchLib.Communication.Models;
@@ -53,7 +52,7 @@ namespace TwitchLib.Communication.Clients
                 {
                     TokenSource = _tokenSource
                 };
-            InitializeClientAsync(CancellationToken.None).GetAwaiter().GetResult();
+            //InitializeClientAsync(_tokenSource.Token).ConfigureAwait(false);
         }
 
         private async Task InitializeClientAsync(CancellationToken cancellationToken)
@@ -62,12 +61,15 @@ namespace TwitchLib.Communication.Clients
 
             if (_monitorTask == null)
             {
-                _monitorTask = StartMonitorTask(cancellationToken);
+                _monitorTask = StartMonitorTaskAsync(cancellationToken);
                 return;
             }
 
-            if (_monitorTask.IsCompleted) _monitorTask = StartMonitorTask(cancellationToken);
-            await _monitorTask;
+            if (_monitorTask.IsCompleted)
+            {
+                _monitorTask = StartMonitorTaskAsync(cancellationToken);
+                await _monitorTask;
+            }
         }
 
         public async Task<bool> OpenAsync(CancellationToken cancellationToken)
@@ -76,23 +78,20 @@ namespace TwitchLib.Communication.Clients
             {
                 if (IsConnected) return true;
 
-                Task.Run(() =>
+                await InitializeClientAsync(cancellationToken).ConfigureAwait(false);
+                Client.Connect(_server, Port);
+                if (Options.UseSsl)
                 {
-                    InitializeClientAsync(cancellationToken);
-                    Client.Connect(_server, Port);
-                    if (Options.UseSsl)
-                    {
-                        var ssl = new SslStream(Client.GetStream(), false);
-                        ssl.AuthenticateAsClient(_server);
-                        _reader = new StreamReader(ssl);
-                        _writer = new StreamWriter(ssl);
-                    }
-                    else
-                    {
-                        _reader = new StreamReader(Client.GetStream());
-                        _writer = new StreamWriter(Client.GetStream());
-                    }
-                }).Wait(10000);
+                    var ssl = new SslStream(Client.GetStream(), false);
+                    ssl.AuthenticateAsClient(_server);
+                    _reader = new StreamReader(ssl);
+                    _writer = new StreamWriter(ssl);
+                }
+                else
+                {
+                    _reader = new StreamReader(Client.GetStream());
+                    _writer = new StreamWriter(Client.GetStream());
+                }
 
                 if (!IsConnected) return await OpenAsync(cancellationToken).ConfigureAwait(false);
 
@@ -114,13 +113,16 @@ namespace TwitchLib.Communication.Clients
 
             _stopServices = callDisconnect;
             CleanupServices();
-            await InitializeClientAsync(cancellationToken).ConfigureAwait(false);
+            //await InitializeClientAsync(cancellationToken).ConfigureAwait(false);
             OnDisconnected?.Invoke(this, new OnDisconnectedEventArgs());
+
+            await Task.CompletedTask;
         }
 
         public async Task ReconnectAsync(CancellationToken cancellationToken)
         {
             await CloseAsync(cancellationToken).ConfigureAwait(false);
+            await InitializeClientAsync(cancellationToken).ConfigureAwait(false);
             await OpenAsync(cancellationToken).ConfigureAwait(false);
             OnReconnected?.Invoke(this, new OnReconnectedEventArgs());
         }
@@ -209,47 +211,44 @@ namespace TwitchLib.Communication.Clients
             }
         }
 
-        private Task StartMonitorTask(CancellationToken cancellationToken)
+        private async Task StartMonitorTaskAsync(CancellationToken cancellationToken)
         {
-            return Task.Run(() =>
+            var needsReconnect = false;
+            try
             {
-                var needsReconnect = false;
-                try
+                var lastState = IsConnected;
+                while (!cancellationToken.IsCancellationRequested)
                 {
-                    var lastState = IsConnected;
-                    while (!_tokenSource.IsCancellationRequested)
+                    if (lastState == IsConnected)
                     {
-                        if (lastState == IsConnected)
-                        {
-                            Thread.Sleep(200);
-                            continue;
-                        }
-                        OnStateChanged?.Invoke(this, new OnStateChangedEventArgs { IsConnected = IsConnected, WasConnected = lastState });
-
-                        if (IsConnected)
-                            OnConnected?.Invoke(this, new OnConnectedEventArgs());
-
-                        if (!IsConnected && !_stopServices)
-                        {
-                            if (lastState && Options.ReconnectionPolicy != null && !Options.ReconnectionPolicy.AreAttemptsComplete())
-                            {
-                                needsReconnect = true;
-                                break;
-                            }
-                            OnDisconnected?.Invoke(this, new OnDisconnectedEventArgs());
-                        }
-
-                        lastState = IsConnected;
+                        await Task.Delay(200).ConfigureAwait(false);
+                        continue;
                     }
-                }
-                catch (Exception ex)
-                {
-                    OnError?.Invoke(this, new OnErrorEventArgs { Exception = ex });
-                }
+                    OnStateChanged?.Invoke(this, new OnStateChangedEventArgs { IsConnected = IsConnected, WasConnected = lastState });
 
-                if (needsReconnect && !_stopServices)
-                    ReconnectAsync(cancellationToken);
-            }, _tokenSource.Token);
+                    if (IsConnected)
+                        OnConnected?.Invoke(this, new OnConnectedEventArgs());
+
+                    if (!IsConnected && !_stopServices)
+                    {
+                        if (lastState && Options.ReconnectionPolicy != null && !Options.ReconnectionPolicy.AreAttemptsComplete())
+                        {
+                            needsReconnect = true;
+                            break;
+                        }
+                        OnDisconnected?.Invoke(this, new OnDisconnectedEventArgs());
+                    }
+
+                    lastState = IsConnected;
+                }
+            }
+            catch (Exception ex)
+            {
+                OnError?.Invoke(this, new OnErrorEventArgs { Exception = ex });
+            }
+
+            if (needsReconnect && !_stopServices)
+                await ReconnectAsync(cancellationToken);
         }
 
         private void CleanupServices()
