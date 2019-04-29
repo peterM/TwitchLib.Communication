@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Threading;
 using System.Threading.Tasks;
-
+using TwitchLib.Communication.Events;
 using TwitchLib.Communication.Interfaces;
 using TwitchLib.Communication.Models;
 using TwitchLib.Communication.Services;
@@ -56,7 +56,7 @@ namespace TwitchLib.Communication.Clients
             }
             catch (Exception ex)
             {
-                //RaiseOnErrorAsync(ex);
+                RaiseOnErrorInternal(ex);
                 return Task.FromResult(false);
             }
         }
@@ -64,8 +64,8 @@ namespace TwitchLib.Communication.Clients
         protected override Task StartNetworkServicesAsync(CancellationToken cancellationToken)
         {
             base.StartNetworkServicesAsync(cancellationToken);
-            NetworkServices.Add(_throttlers.StartSenderTaskAsync(cancellationToken));
-            NetworkServices.Add(_throttlers.StartWhisperSenderTaskAsync(cancellationToken));
+            //NetworkServices.Add(_throttlers.StartSenderTaskAsync(cancellationToken));
+            //NetworkServices.Add(_throttlers.StartWhisperSenderTaskAsync(cancellationToken));
 
             return Task.CompletedTask;
         }

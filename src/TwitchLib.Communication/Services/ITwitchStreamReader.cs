@@ -10,6 +10,6 @@ namespace TwitchLib.Communication.Services
         event Func<object, OnErrorEventArgs, Task> OnError;
         event Func<object, OnMessageEventArgs, Task> OnMessage;
 
-        Task StartListen(CancellationToken cancellationToken);
+        Task StartListenAsync(CancellationToken cancellationToken);
     }
 }

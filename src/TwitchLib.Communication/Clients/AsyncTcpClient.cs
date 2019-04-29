@@ -10,13 +10,12 @@ using TwitchLib.Communication.Services;
 
 namespace TwitchLib.Communication.Clients
 {
-    public class AsyncTcpClient : IDisposable
+    public class AsyncTcpClient : IAsyncClient
     {
-        private const string _server = "irc.chat.twitch.tv";
-
         private System.Net.Sockets.TcpClient _tcpClient;
         private readonly ITwitchStreamReader _twitchStreamReader;
         private readonly ITwitchStreamWritter _twitchStreamWritter;
+        private readonly IrcServerProvider _ircServerProvider;
 
         protected CancellationTokenSource TokenSource { get; set; }
 
@@ -29,6 +28,7 @@ namespace TwitchLib.Communication.Clients
         public bool IsConnected => _tcpClient?.Connected ?? false;
 
         public event Func<object, OnErrorEventArgs, Task> OnErrorInternal;
+
         public event Func<object, OnErrorEventArgs, Task> OnError
         {
             add
@@ -78,6 +78,7 @@ namespace TwitchLib.Communication.Clients
 
         internal AsyncTcpClient(
             IClientOptions clientOptions,
+            IrcServerProvider ircServerProvider,
             ITwitchStreamReader twitchStreamReader,
             ITwitchStreamWritter twitchStreamWritter)
         {
@@ -86,6 +87,7 @@ namespace TwitchLib.Communication.Clients
 
             _twitchStreamReader = twitchStreamReader;
             _twitchStreamWritter = twitchStreamWritter;
+            _ircServerProvider = ircServerProvider;
 
             Options = clientOptions;
 
@@ -94,15 +96,17 @@ namespace TwitchLib.Communication.Clients
 
         public AsyncTcpClient()
             : this(new ClientOptions(),
-                  new TwitchStreamReader(_server),
-                  new TwitchStreamWriter(_server))
+                  new IrcServerProvider(),
+                  new TwitchStreamReader(new IrcServerProvider().Server),
+                  new TwitchStreamWriter(new IrcServerProvider().Server))
         {
         }
 
         public AsyncTcpClient(IClientOptions clientOptions)
            : this(clientOptions,
-                 new TwitchStreamReader(_server),
-                 new TwitchStreamWriter(_server))
+                 new IrcServerProvider(),
+                 new TwitchStreamReader(new IrcServerProvider().Server),
+                 new TwitchStreamWriter(new IrcServerProvider().Server))
         {
         }
 
@@ -217,7 +221,7 @@ namespace TwitchLib.Communication.Clients
         {
             int portNumber = GetPort();
 
-            await _tcpClient.ConnectAsync(_server, portNumber)
+            await _tcpClient.ConnectAsync(_ircServerProvider.Server, portNumber)
                 .ConfigureAwait(false);
         }
 
@@ -267,7 +271,7 @@ namespace TwitchLib.Communication.Clients
             }
             catch (Exception ex)
             {
-                OnErrorInternal?.Invoke(this, new OnErrorEventArgs { Exception = ex });
+                RaiseOnErrorInternal(ex);
             }
 
             if (needsReconnect && !cancellationToken.IsCancellationRequested)
@@ -275,6 +279,11 @@ namespace TwitchLib.Communication.Clients
                 await ReconnectAsync()
                     .ConfigureAwait(false);
             }
+        }
+
+        protected void RaiseOnErrorInternal(Exception ex)
+        {
+            OnErrorInternal?.Invoke(this, new OnErrorEventArgs { Exception = ex });
         }
 
         private async Task CleanupServicesAsync()
@@ -286,7 +295,8 @@ namespace TwitchLib.Communication.Clients
 
             try
             {
-                await Task.WhenAll(NetworkServices).ConfigureAwait(false);
+                await Task.WhenAll(NetworkServices)
+                    .ConfigureAwait(false);
             }
             catch (Exception)
             {
@@ -301,7 +311,7 @@ namespace TwitchLib.Communication.Clients
 
         protected virtual Task StartNetworkServicesAsync(CancellationToken cancellationToken)
         {
-            NetworkServices.Add(_twitchStreamReader.StartListen(cancellationToken));
+            NetworkServices.Add(_twitchStreamReader.StartListenAsync(cancellationToken));
 
             return Task.CompletedTask;
         }

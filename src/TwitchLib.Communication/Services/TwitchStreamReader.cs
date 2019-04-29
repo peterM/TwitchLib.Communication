@@ -32,7 +32,7 @@ namespace TwitchLib.Communication.Services
             return Task.CompletedTask;
         }
 
-        public async Task StartListen(CancellationToken cancellationToken)
+        public async Task StartListenAsync(CancellationToken cancellationToken)
         {
             if (Reader == null)
                 return;
