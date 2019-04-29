@@ -55,7 +55,7 @@ namespace TwitchLib.Communication.Clients
             }
             catch (Exception ex)
             {
-                RaiseOnErrorAsync(ex);
+                //RaiseOnErrorAsync(ex);
                 return Task.FromResult(false);
             }
         }

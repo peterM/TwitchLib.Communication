@@ -1,8 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Net.Security;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -15,18 +12,11 @@ namespace TwitchLib.Communication.Clients
 {
     public class AsyncTcpClient : IDisposable
     {
-        private IEnumerable<IStreamReceiver> StreamReceivers =>
-            new IStreamReceiver[]
-            {
-                new HttpStreamReceiver(),
-                new HttpsStreamReceiver(_server)
-            };
-
         private const string _server = "irc.chat.twitch.tv";
 
         private System.Net.Sockets.TcpClient _tcpClient;
-        private StreamReader _reader;
-        private StreamWriter _writer;
+        private ITwitchStreamReader _reader;
+        private ITwitchStreamWriter _writer;
 
         protected CancellationTokenSource TokenSource { get; set; }
 
@@ -38,11 +28,51 @@ namespace TwitchLib.Communication.Clients
 
         public bool IsConnected => _tcpClient?.Connected ?? false;
 
+        public event Func<object, OnErrorEventArgs, Task> OnErrorInternal;
+        public event Func<object, OnErrorEventArgs, Task> OnError
+        {
+            add
+            {
+                if (_reader != null)
+                    _reader.OnError += value;
+
+                if (_writer != null)
+                    _writer.OnError += value;
+
+                OnErrorInternal += value;
+            }
+
+            remove
+            {
+                if (_reader != null)
+                    _reader.OnError -= value;
+
+                if (_writer != null)
+                    _writer.OnError -= value;
+
+                OnErrorInternal -= value;
+            }
+        }
+
+        public event Func<object, OnMessageEventArgs, Task> OnMessage
+        {
+            add
+            {
+                if (_reader != null)
+                    _reader.OnMessage += value;
+            }
+
+            remove
+            {
+                if (_reader != null)
+                    _reader.OnMessage -= value;
+            }
+        }
+
+        // Others
         public event Func<object, OnConnectedEventArgs, Task> OnConnected;
         public event Func<object, OnDisconnectedEventArgs, Task> OnDisconnected;
-        public event Func<object, OnErrorEventArgs, Task> OnError;
         public event Func<object, OnFatalErrorEventArgs, Task> OnFatality;
-        public event Func<object, OnMessageEventArgs, Task> OnMessage;
         public event Func<object, OnStateChangedEventArgs, Task> OnStateChanged;
         public event Func<object, OnReconnectedEventArgs, Task> OnReconnected;
 
@@ -50,6 +80,9 @@ namespace TwitchLib.Communication.Clients
         {
             NetworkServices = new List<Task>();
             TokenSource = new CancellationTokenSource();
+
+            _reader = new TwitchStreamReader(_server);
+            _writer = new TwitchStreamWriter(_server);
 
             Options = clientOptions;
 
@@ -79,7 +112,9 @@ namespace TwitchLib.Communication.Clients
                 }
 
                 NetworkServices.Add(StartMonitorTaskAsync(TokenSource.Token));
-                await ConnectAsync().ConfigureAwait(false);
+
+                await ConnectAsync()
+                    .ConfigureAwait(false);
 
                 await SetupReadersWritersAsync()
                      .ConfigureAwait(false);
@@ -113,38 +148,29 @@ namespace TwitchLib.Communication.Clients
 
         public virtual async Task ReconnectAsync()
         {
-            await CloseAsync().ConfigureAwait(false);
+            await CloseAsync()
+                .ConfigureAwait(false);
+
             TokenSource = new CancellationTokenSource();
+
             CreateClient();
-            await OpenAsync().ConfigureAwait(false);
+
+            await OpenAsync()
+                .ConfigureAwait(false);
+
             OnReconnected?.Invoke(this, new OnReconnectedEventArgs());
         }
 
         public virtual async Task<bool> SendAsync(string message)
         {
-            var result = true;
-            try
-            {
-                await _writer.WriteLineAsync(message).ConfigureAwait(false);
-                await _writer.FlushAsync().ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                result = false;
-                RaiseOnErrorAsync(ex);
-            }
-
-            return result;
-        }
-
-        protected Task RaiseOnErrorAsync(Exception ex)
-        {
-            return AwaitTaskAsync(OnError?.Invoke(this, new OnErrorEventArgs { Exception = ex }));
+            return await _writer.WriteAsync(message)
+                .ConfigureAwait(false);
         }
 
         public void Dispose()
         {
-            DisposeAsync(true).GetAwaiter().GetResult();
+            DisposeAsync(true).GetAwaiter()
+               .GetResult();
         }
 
         protected virtual async Task DisposeAsync(bool disposing)
@@ -158,7 +184,8 @@ namespace TwitchLib.Communication.Clients
                 _tcpClient?.Close();
                 _reader?.Dispose();
                 _writer?.Dispose();
-                await CleanupServicesAsync();
+                await CleanupServicesAsync()
+                    .ConfigureAwait(false);
 
                 _tcpClient = null;
                 _reader = null;
@@ -169,16 +196,18 @@ namespace TwitchLib.Communication.Clients
 
         private async Task SetupReadersWritersAsync()
         {
-            var stream = await StreamReceivers.SingleOrDefault(d => d.IsHttps == Options.UseSsl)
-                .GetStreamAsync(_tcpClient).ConfigureAwait(false);
+            await _reader.SetupFromClientAsync(_tcpClient, Options)
+                .ConfigureAwait(false);
 
-            _reader = new StreamReader(stream);
-            _writer = new StreamWriter(stream);
+            await _writer.SetupFromClientAsync(_tcpClient, Options)
+                .ConfigureAwait(false);
         }
 
         private async Task ConnectAsync()
         {
-            await _tcpClient.ConnectAsync(_server, Port)
+            int portNumber = GetPort();
+
+            await _tcpClient.ConnectAsync(_server, portNumber)
                 .ConfigureAwait(false);
         }
 
@@ -192,11 +221,13 @@ namespace TwitchLib.Communication.Clients
                 {
                     if (lastState == IsConnected)
                     {
-                        await Task.Delay(100).ConfigureAwait(false);
+                        await Task.Delay(100)
+                            .ConfigureAwait(false);
                         continue;
                     }
 
                     OnStateChanged?.Invoke(this, new OnStateChangedEventArgs { IsConnected = IsConnected, WasConnected = lastState });
+
                     if (IsConnected)
                     {
                         OnConnected?.Invoke(this, new OnConnectedEventArgs());
@@ -221,20 +252,13 @@ namespace TwitchLib.Communication.Clients
             }
             catch (Exception ex)
             {
-                OnError?.Invoke(this, new OnErrorEventArgs { Exception = ex });
+                OnErrorInternal?.Invoke(this, new OnErrorEventArgs { Exception = ex });
             }
 
             if (needsReconnect && !cancellationToken.IsCancellationRequested)
             {
-                await ReconnectAsync().ConfigureAwait(false);
-            }
-        }
-
-        private async Task AwaitTaskAsync(Task task)
-        {
-            if (task != null)
-            {
-                await task;
+                await ReconnectAsync()
+                    .ConfigureAwait(false);
             }
         }
 
@@ -262,26 +286,9 @@ namespace TwitchLib.Communication.Clients
 
         protected virtual Task StartNetworkServicesAsync(CancellationToken cancellationToken)
         {
-            NetworkServices.Add(StartListenerTaskAsync(cancellationToken));
+            NetworkServices.Add(_reader.StartListen(cancellationToken));
 
             return Task.CompletedTask;
-        }
-
-        private async Task StartListenerTaskAsync(CancellationToken cancellationToken)
-        {
-            while (IsConnected
-                   && !cancellationToken.IsCancellationRequested)
-            {
-                try
-                {
-                    string message = await _reader.ReadLineAsync().ConfigureAwait(false);
-                    OnMessage?.Invoke(this, new OnMessageEventArgs { Message = message });
-                }
-                catch (Exception ex)
-                {
-                    OnError?.Invoke(this, new OnErrorEventArgs { Exception = ex });
-                }
-            }
         }
 
         private int GetPort()
