@@ -4,7 +4,6 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-
 using TwitchLib.Communication.Enums;
 using TwitchLib.Communication.Events;
 using TwitchLib.Communication.Interfaces;
@@ -61,74 +60,68 @@ namespace TwitchLib.Communication.Clients
             _throttlers = new Throttlers(this, Options.ThrottlingPeriod, Options.WhisperThrottlingPeriod) { TokenSource = _tokenSource };
         }
 
-        private async Task InitializeClientAsync(CancellationToken cancellationToken)
+        private void InitializeClient()
         {
             Client?.Abort();
             Client = new ClientWebSocket();
 
             if (_monitorTask == null)
             {
-                _monitorTask = StartMonitorTaskAsync(cancellationToken);
+                _monitorTask = StartMonitorTask();
                 return;
             }
 
-            if (_monitorTask.IsCompleted)
-            {
-                _monitorTask = StartMonitorTaskAsync(cancellationToken);
-                await _monitorTask;
-            }
+            if (_monitorTask.IsCompleted) _monitorTask = StartMonitorTask();
         }
 
-        public async Task<bool> OpenAsync(CancellationToken cancellationToken)
+        public bool Open()
         {
             try
             {
                 if (IsConnected) return true;
 
-                await InitializeClientAsync(cancellationToken).ConfigureAwait(false);
+                InitializeClient();
                 Client.ConnectAsync(new Uri(Url), _tokenSource.Token).Wait(10000);
-                if (!IsConnected)
-                    return await OpenAsync(cancellationToken).ConfigureAwait(false);
+                if (!IsConnected) return Open();
 
-                await StartNetworkServicesAsync(cancellationToken).ConfigureAwait(false);
+                StartNetworkServices();
                 return true;
             }
             catch (WebSocketException)
             {
-                await InitializeClientAsync(cancellationToken).ConfigureAwait(false);
+                InitializeClient();
                 return false;
             }
         }
 
-        public async Task CloseAsync(CancellationToken cancellationToken, bool callDisconnect = true)
+        public void Close(bool callDisconnect = true)
         {
             Client?.Abort();
             _stopServices = callDisconnect;
             CleanupServices();
-            //await InitializeClientAsync(cancellationToken).ConfigureAwait(false);
+            InitializeClient();
             OnDisconnected?.Invoke(this, new OnDisconnectedEventArgs());
         }
 
-        public async Task ReconnectAsync(CancellationToken cancellationToken)
+        public void Reconnect()
         {
-            await CloseAsync(cancellationToken).ConfigureAwait(false);
-            await InitializeClientAsync(cancellationToken).ConfigureAwait(false);
-            await OpenAsync(cancellationToken).ConfigureAwait(false);
+            Close();
+            Open();
             OnReconnected?.Invoke(this, new OnReconnectedEventArgs());
         }
 
-        public Task<bool> SendAsync(string message, CancellationToken cancellationToken)
+        public bool Send(string message)
         {
             try
             {
                 if (!IsConnected || SendQueueLength >= Options.SendQueueCapacity)
                 {
-                    return Task.FromResult(false);
+                    return false;
                 }
 
                 _throttlers.SendQueue.Add(new Tuple<DateTime, string>(DateTime.UtcNow, message));
 
-                return Task.FromResult(true);
+                return true;
             }
             catch (Exception ex)
             {
@@ -157,115 +150,116 @@ namespace TwitchLib.Communication.Clients
             }
         }
 
-        private Task StartNetworkServicesAsync(CancellationToken cancellationToken)
+        private void StartNetworkServices()
         {
             _networkServicesRunning = true;
             _networkTasks = new[]
             {
-                StartListenerTaskAsync(cancellationToken),
-                _throttlers.StartSenderTaskAsync(cancellationToken),
-                _throttlers.StartWhisperSenderTaskAsync(cancellationToken)
+                StartListenerTask(),
+                _throttlers.StartSenderTask(),
+                _throttlers.StartWhisperSenderTask()
             }.ToArray();
 
-            if (!_networkTasks.Any(c => c.IsFaulted))
-                return Task.CompletedTask;
+            if (!_networkTasks.Any(c => c.IsFaulted)) return;
             _networkServicesRunning = false;
             CleanupServices();
-
-            return Task.CompletedTask;
         }
 
-        public Task SendAsync(byte[] message, CancellationToken cancellationToken)
+        public Task SendAsync(byte[] message)
         {
-            return Client.SendAsync(new ArraySegment<byte>(message), WebSocketMessageType.Text, true, cancellationToken);
+            return Client.SendAsync(new ArraySegment<byte>(message), WebSocketMessageType.Text, true, _tokenSource.Token);
         }
 
-        private async Task StartListenerTaskAsync(CancellationToken cancellationToken)
+        private Task StartListenerTask()
         {
-            var message = "";
-
-            while (IsConnected
-                && _networkServicesRunning
-                && !cancellationToken.IsCancellationRequested)
+            return Task.Run(async () =>
             {
-                WebSocketReceiveResult result;
-                var buffer = new byte[1024];
+                var message = "";
 
+                while (IsConnected && _networkServicesRunning)
+                {
+                    WebSocketReceiveResult result;
+                    var buffer = new byte[1024];
+
+                    try
+                    {
+                        result = await Client.ReceiveAsync(new ArraySegment<byte>(buffer), _tokenSource.Token);
+                    }
+                    catch
+                    {
+                        InitializeClient();
+                        break;
+                    }
+
+                    if (result == null) continue;
+
+                    switch (result.MessageType)
+                    {
+                        case WebSocketMessageType.Close:
+                            Close();
+                            break;
+                        case WebSocketMessageType.Text when !result.EndOfMessage:
+                            message += Encoding.UTF8.GetString(buffer).TrimEnd('\0');
+                            continue;
+                        case WebSocketMessageType.Text:
+                            message += Encoding.UTF8.GetString(buffer).TrimEnd('\0');
+                            OnMessage?.Invoke(this, new OnMessageEventArgs() { Message = message });
+                            break;
+                        case WebSocketMessageType.Binary:
+                            break;
+                        default:
+                            throw new ArgumentOutOfRangeException();
+                    }
+
+                    message = "";
+                }
+            });
+        }
+
+        private Task StartMonitorTask()
+        {
+            return Task.Run(() =>
+            {
+                var needsReconnect = false;
                 try
                 {
-                    result = await Client.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken).ConfigureAwait(false);
-                }
-                catch
-                {
-                    await InitializeClientAsync(cancellationToken).ConfigureAwait(false);
-                    break;
-                }
-
-                if (result == null) continue;
-
-                switch (result.MessageType)
-                {
-                    case WebSocketMessageType.Close:
-                        await CloseAsync(cancellationToken).ConfigureAwait(false);
-                        break;
-                    case WebSocketMessageType.Text when !result.EndOfMessage:
-                        message += Encoding.UTF8.GetString(buffer).TrimEnd('\0');
-                        continue;
-                    case WebSocketMessageType.Text:
-                        message += Encoding.UTF8.GetString(buffer).TrimEnd('\0');
-                        OnMessage?.Invoke(this, new OnMessageEventArgs() { Message = message });
-                        break;
-                    case WebSocketMessageType.Binary:
-                        break;
-                    default:
-                        throw new ArgumentOutOfRangeException();
-                }
-
-                message = "";
-            }
-        }
-
-        private async Task StartMonitorTaskAsync(CancellationToken cancellationToken)
-        {
-            var needsReconnect = false;
-            try
-            {
-                var lastState = IsConnected;
-                while (!_tokenSource.IsCancellationRequested)
-                {
-                    if (lastState == IsConnected)
+                    var lastState = IsConnected;
+                    while (!_tokenSource.IsCancellationRequested)
                     {
-                        await Task.Delay(200).ConfigureAwait(false);
-                        continue;
-                    }
-                    OnStateChanged?.Invoke(this, new OnStateChangedEventArgs { IsConnected = Client.State == WebSocketState.Open, WasConnected = lastState });
-
-                    if (IsConnected)
-                        OnConnected?.Invoke(this, new OnConnectedEventArgs());
-
-                    if (!IsConnected && !_stopServices)
-                    {
-                        if (lastState && Options.ReconnectionPolicy?.AreAttemptsComplete() == false)
+                        if (lastState == IsConnected)
                         {
-                            needsReconnect = true;
-                            break;
+                            Thread.Sleep(200);
+                            continue;
+                        }
+                        OnStateChanged?.Invoke(this, new OnStateChangedEventArgs { IsConnected = Client.State == WebSocketState.Open, WasConnected = lastState });
+
+                        if (IsConnected)
+                            OnConnected?.Invoke(this, new OnConnectedEventArgs());
+
+                        if (!IsConnected && !_stopServices)
+                        {
+                            if (lastState && Options.ReconnectionPolicy != null && !Options.ReconnectionPolicy.AreAttemptsComplete())
+                            {
+                                needsReconnect = true;
+                                break;
+                            }
+
+                            OnDisconnected?.Invoke(this, new OnDisconnectedEventArgs());
+                            if (Client.CloseStatus != null && Client.CloseStatus != WebSocketCloseStatus.NormalClosure)
+                                OnError?.Invoke(this, new OnErrorEventArgs { Exception = new Exception(Client.CloseStatus + " " + Client.CloseStatusDescription) });
                         }
 
-                        OnDisconnected?.Invoke(this, new OnDisconnectedEventArgs());
-                        if (Client.CloseStatus != null && Client.CloseStatus != WebSocketCloseStatus.NormalClosure)
-                            OnError?.Invoke(this, new OnErrorEventArgs { Exception = new Exception(Client.CloseStatus + " " + Client.CloseStatusDescription) });
+                        lastState = IsConnected;
                     }
-
-                    lastState = IsConnected;
                 }
-            }
-            catch (Exception ex)
-            {
-                OnError?.Invoke(this, new OnErrorEventArgs { Exception = ex });
-            }
+                catch (Exception ex)
+                {
+                    OnError?.Invoke(this, new OnErrorEventArgs { Exception = ex });
+                }
 
-            if (needsReconnect && !_stopServices)
-                await ReconnectAsync(cancellationToken).ConfigureAwait(false);
+                if (needsReconnect && !_stopServices)
+                    Reconnect();
+            }, _tokenSource.Token);
         }
 
         private void CleanupServices()
@@ -310,7 +304,7 @@ namespace TwitchLib.Communication.Clients
 
         public void Dispose()
         {
-            CloseAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Close();
             _throttlers.ShouldDispose = true;
             _tokenSource.Cancel();
             Thread.Sleep(500);

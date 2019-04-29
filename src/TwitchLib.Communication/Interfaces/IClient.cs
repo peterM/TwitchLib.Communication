@@ -1,7 +1,4 @@
 ﻿using System;
-using System.Threading;
-using System.Threading.Tasks;
-
 using TwitchLib.Communication.Events;
 
 namespace TwitchLib.Communication.Interfaces
@@ -92,9 +89,7 @@ namespace TwitchLib.Communication.Interfaces
         /// Disconnect the Client from the Server
         /// <param name="callDisconnect">Set disconnect called in the client. Used in test cases. (default true)</param>
         /// </summary>
-        /// <param name="cancellationToken"></param>
-        /// <param name="callDisconnect"></param>
-        Task CloseAsync(CancellationToken cancellationToken, bool callDisconnect = true);
+        void Close(bool callDisconnect = true);
 
         /// <summary>
         /// Dispose the Client. Forces the Send Queue to be destroyed, resulting in Message Loss.
@@ -104,17 +99,15 @@ namespace TwitchLib.Communication.Interfaces
         /// <summary>
         /// Connect the Client to the requested Url.
         /// </summary>
-        /// <param name="cancellationToken"></param>
         /// <returns>Returns True if Connected, False if Failed to Connect.</returns>
-        Task<bool> OpenAsync(CancellationToken cancellationToken);
+        bool Open();
 
         /// <summary>
         /// Queue a Message to Send to the server as a String.
         /// </summary>
         /// <param name="message">The Message To Queue</param>
-        /// <param name="cancellationToken"></param>
         /// <returns>Returns True if was successfully queued. False if it fails.</returns>
-        Task<bool> SendAsync(string message, CancellationToken cancellationToken);
+        bool Send(string message);
 
         /// <summary>
         /// Queue a Whisper to Send to the server as a String.
@@ -126,8 +119,7 @@ namespace TwitchLib.Communication.Interfaces
         /// <summary>
         /// Manually reconnects the client.
         /// </summary>
-        /// <param name="cancellationToken"></param>
-        Task ReconnectAsync(CancellationToken cancellationToken);
+        void Reconnect();
 
         void MessageThrottled(OnMessageThrottledEventArgs eventArgs);
         void SendFailed(OnSendFailedEventArgs eventArgs);
